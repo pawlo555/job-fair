@@ -9,16 +9,20 @@ sizeOf2DList([X|List], Length, ElementsInLine) :-
 
 studentsInTimeSlots([], []).
 studentsInTimeSlots([Slot1, Slot2, Slot3|TimeSlots], [AvailableSlots|Slots]) :-
-    member(Slot1, AvailableSlots),
-    member(Slot2, AvailableSlots),
-    member(Slot3, AvailableSlots),
+    createDomain(AvailableSlots, Domain),
+    Slot1 in Domain,
+    Slot2 in Domain,
+    Slot3 in Domain,
    	studentsInTimeSlots(TimeSlots, Slots).
+
+createDomain([X], X).
+createDomain([X|List], Domain) :-
+    Domain =  X \/ RestDomain,
+    createDomain(List, RestDomain).
 
 differentTimeSlots([]).
 differentTimeSlots([Slot1, Slot2, Slot3|TimeSlots]) :-
-    all_different([Slot1, Slot2, Slot3]),
-    Slot1 #< Slot2,
-    Slot2 #< Slot3,
+    chain([Slot1,Slot2,Slot3], #>),
     differentTimeSlots(TimeSlots).
 
 differentCompanies([]).
@@ -46,13 +50,18 @@ jobFair(Nstudents, Ncompanies, Slots, Preferences, Parallel_limits, Expectation,
     parallel_limits(Companies, TimeSlots, Ncompanies,  Parallel_limits),
     Obj in 1..1000,
 	generateListOfVariables(Companies, TimeSlots, ListOfVariables),
-    calcObj(Companies, TimeSlots, AttendanceCosts, Preferences, Obj),
-    labeling([min(Obj), ff], [Obj|ListOfVariables]).
-
+    calcAGHCost(TimeSlots, AGHCost),
+    calcCompaniesCost(Companies, TimeSlots, AttendanceCosts, CompaniesCost),
+    calcStudentExpectation(Companies, Preferences, Expectation, StudentsCost),
+    StudentsCost #= 10,
+    calcObj(AGHCost, CompaniesCost, StudentsCost, Obj),
+    labeling([ff], [Obj|ListOfVariables]).
 
 studentsPerCompany([], _, 0).
-studentsPerCompany([CompanyNumber|Companies], CompanyNumber, StudentsNumber) :-
-    StudentsNumber #= StudentsNumber1+1,
+studentsPerCompany([CompanyNumber1|Companies], CompanyNumber, StudentsNumber) :-
+    IsInteriewWithCompany in 0..1,
+    CompanyNumber #= CompanyNumber1 #<==> IsInteriewWithCompany,
+    StudentsNumber #= IsInteriewWithCompany + StudentsNumber1,
     studentsPerCompany(Companies, CompanyNumber, StudentsNumber1).
 studentsPerCompany([OtherCompany|Companies], CompanyNumber, StudentsNumber) :-
     OtherCompany #\= CompanyNumber,
@@ -61,7 +70,7 @@ studentsPerCompany([OtherCompany|Companies], CompanyNumber, StudentsNumber) :-
 companiesLimits(Companies, Ncompanies, MinCap, MaxCap) :-
     companiesLimits(Companies, Ncompanies, MinCap, MaxCap, Ncompanies).
 
-companiesLimits(_, _, [], [], 0).
+companiesLimits(_, _, [], [], _).
 companiesLimits(Companies, Ncompanies, [Min|MinCap], [Max|MaxCap], CurrentCompany) :-
     studentsPerCompany(Companies, CurrentCompany, StudentsNumber),
     Min #=< StudentsNumber,
@@ -69,18 +78,17 @@ companiesLimits(Companies, Ncompanies, [Min|MinCap], [Max|MaxCap], CurrentCompan
     CurrentCompany #= CurrentCompany1+1,
     companiesLimits(Companies, Ncompanies, MinCap, MaxCap, CurrentCompany1).
 
-
 generateListOfVariables(Companies, TimeSlots, ListOfVariables) :-
     append(Companies, TimeSlots, ListOfVariables).
 
 parallel_limits(Companies, TimeSlots, Ncompanies, CompaniesLimits) :-
 	parallel_limits(Companies, TimeSlots, Ncompanies, CompaniesLimits, 1).
 
-parallel_limits(_, _,_, [], 21).
+parallel_limits(_, _,_, _, 21).
 parallel_limits(Companies, TimeSlots, Ncompanies, CompaniesLimits, TimeSlot) :-
     parallel_limits(Companies, TimeSlots, Ncompanies, CompaniesLimits, TimeSlot, 1),
     TimeSlot1 #= TimeSlot+1,
-    parallel_limits(Companies, TimeSlots, CompaniesLimits, TimeSlot1).
+    parallel_limits(Companies, TimeSlots, Ncompanies, CompaniesLimits, TimeSlot1).
 
 parallel_limits(_, _, Ncompanies, _, _, Ncompanies).
 parallel_limits(Companies, TimeSlots, Ncompanies, [CompLimit|CompaniesLimits], TimeSlot, CurrentCompany) :-
@@ -90,35 +98,82 @@ parallel_limits(Companies, TimeSlots, Ncompanies, [CompLimit|CompaniesLimits], T
     parallel_limits(Companies, TimeSlots, Ncompanies, CompaniesLimits, TimeSlot, NextCompany).
 
 companyInterviewsInTimeSlot([], [], _, _, 0).
-companyInterviewsInTimeSlot([Company|Companies], [TimeSlot|TimeSlots],
+companyInterviewsInTimeSlot([Company1|Companies], [TimeSlot1|TimeSlots],
                             TimeSlot, Company, Interviews) :-
-    Interviews #= Interviews1+1,
-    companyInterviewsInTimeSlot(Companies, TimeSlots, TimeSlot, Company, Interviews1),
-    write(Interviews).
-companyInterviewsInTimeSlot([Company1|Companies], [_|TimeSlots],
-                            TimeSlot, Company, Interviews) :-
-    Company1 #\= Company,
-    companyInterviewsInTimeSlot(Companies, TimeSlots, TimeSlot, Company, Interviews). 
-companyInterviewsInTimeSlot([_|Companies], [TimeSlot1|TimeSlots],
-                           TimeSlot, Company, Interviews) :-
-   TimeSlot1 #\= TimeSlot,
-   companyInterviewsInTimeSlot(Companies, TimeSlots, TimeSlot, Company, Interviews). 
+    IsInterview in 0..1,
+    (Company1 #= Company #/\ TimeSlot1 #= TimeSlot) #<==> IsInterview,
+    Interviews #= Interviews1+IsInterview,
+    companyInterviewsInTimeSlot(Companies, TimeSlots, TimeSlot, Company, Interviews1).
 
 
-calcObj(Companies, TimeSlots, AttendaceCosts, Preferences, Obj) :-
-    calcAGHCost(TimeSlots, AGHCost),
-    calcCompaniesCost(Companies, TimeSlots, AttendaceCosts, CompaniesCost),
-    calcStudentExpectation(TimeSlots, Preferences, StudentsExpectations),
+% stage 2 calculating objective
+
+calcObj(AGHCost, CompaniesCost, StudentsExpectations, Obj) :-
     Obj #= AGHCost + CompaniesCost + StudentsExpectations.
 
-calcAGHCost(_TimeSlots, AGHCost) :-
-	AGHCost #= 200.
+calcAGHCost(TimeSlots, AGHCost) :-
+    maxRoomsInTimeSlot(TimeSlots, MaxRooms),
+	AGHCost #= 200*MaxRooms.
 
-calcCompaniesCost(_Companies, _TimeSlots, _AttendanceCosts, CompaniesCost) :-
-    CompaniesCost #= 10.
+maxRoomsInTimeSlot(TimeSlots, MaxRooms) :-
+    maxRoomsInTimeSlot(TimeSlots, MaxList, 1),
+    listMax(MaxList, MaxRooms).
 
-calcStudentExpectation(_TimeSlots, _Preferences, StudentsExpectations) :-
-    StudentsExpectations #= 100.
+maxRoomsInTimeSlot(_, [], 21).
+maxRoomsInTimeSlot(TimeSlots, MaxList, TimeSlot) :-
+    roomsInTimeSlot(TimeSlots, TimeSlot, RoomsNumber),
+    MaxList = [RoomsNumber|RestMaxList],
+    TimeSlot1 #= TimeSlot+1,
+    maxRoomsInTimeSlot(TimeSlots, RestMaxList, TimeSlot1).
+
+roomsInTimeSlot([], _, 0).
+roomsInTimeSlot([Slot|TimeSlots], TimeSlot, RoomsNumber) :-
+    IsSlot in 0..1,
+    Slot #= TimeSlot #<==> IsSlot,
+    RoomsNumber #= RoomsNumber1+IsSlot,
+    roomsInTimeSlot(TimeSlots, TimeSlot, RoomsNumber1).
+
+listMax([], 0).
+listMax([X|Rest], Max) :-
+    listMax(Rest, RestMax),
+   	Max #= max(X, RestMax).
+
+calcCompaniesCost(Companies, TimeSlots, AttendanceCosts, CompaniesCost) :-
+    calcCompaniesCost(Companies, TimeSlots, AttendanceCosts, CompaniesCost, 1).
+
+
+calcCompaniesCost(_Companies, _TimeSlots, _AttendanceCosts, 10, 1).
+
+calcStudentExpectation(Companies, Preferences, StudentsExpectations, StudentsCost) :-
+    studentsMatch(Companies, Preferences, Match),
+    calcExpectation(Match, StudentsExpectations, StudentsCost).
+
+studentsMatch([], [], []).
+studentsMatch([Comp1, Comp2, Comp3|Companies], [StudentPreferences|Preferences], Match) :-
+    StudentMatch in 3..15,
+    [Like1, Like2, Like3] ins 1..5,
+    like(Comp1, StudentPreferences, Like1),
+    like(Comp2, StudentPreferences, Like2),
+    like(Comp3, StudentPreferences, Like3),
+    sum([Like1, Like2, Like3], #=, StudentMatch),
+    Match = [StudentMatch|Match1],
+    studentsMatch(Companies, Preferences, Match1).
+
+like(_, [], _).
+like(Company, [Pref|StudentPreferences], Like) :-
+    Company1 #= Company-1,
+    Company #= 1 #<==> Like #= Pref,
+    like(Company1, StudentPreferences, Like).
+    
+    
+
+calcExpectation([], [], 0).
+calcExpectation([StudentMatch|Match], [StudentsExpectation|Expecations], Result) :-
+    Cost in 0..12,
+    Diff #= StudentMatch-StudentsExpectation,
+    Cost #= max(Diff, 0),
+    Result #= Result1+Cost,
+    calcExpectation(Match, Expecations, Result1).
 
 /*
 jobFair(4, 4, 
@@ -132,4 +187,4 @@ jobFair(4, 4,
  [5, 2, 3, 1]],
  [2, 1, 2, 1], [5, 3, 4, 3], [1,1,1,1], [10, 6, 3, 7], [20, 20, 10, 30],  
  Companies, TimeSlots, Obj).
- */
+*/
