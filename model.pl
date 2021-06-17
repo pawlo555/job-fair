@@ -48,14 +48,15 @@ jobFair(Nstudents, Ncompanies, Slots, Preferences, Parallel_limits, Expectation,
     differentCompanies(Companies),
     companiesLimits(Companies, Ncompanies, MinCap, MaxCap),
     parallel_limits(Companies, TimeSlots, Ncompanies,  Parallel_limits),
-    Obj in 1..1000,
-	generateListOfVariables(Companies, TimeSlots, ListOfVariables),
+    generateListOfVariables(Companies, TimeSlots, ListOfVariables),
+    Obj in 1..10000,
+    %labeling([ff, bisect], ListOfVariables),
     calcAGHCost(TimeSlots, AGHCost),
-    calcCompaniesCost(Companies, TimeSlots, AttendanceCosts, CompaniesCost),
     calcStudentExpectation(Companies, Preferences, Expectation, StudentsCost),
-    StudentsCost #= 10,
+    calcCompaniesCost(Companies, TimeSlots, AttendanceCosts, CompaniesCost),
     calcObj(AGHCost, CompaniesCost, StudentsCost, Obj),
-    labeling([ff], [Obj|ListOfVariables]).
+    labeling([ff, bisect, min(Obj)], [Obj|ListOfVariables]),
+    writeln(AGHCost-CompaniesCost-StudentsCost).
 
 studentsPerCompany([], _, 0).
 studentsPerCompany([CompanyNumber1|Companies], CompanyNumber, StudentsNumber) :-
@@ -139,10 +140,37 @@ listMax([X|Rest], Max) :-
    	Max #= max(X, RestMax).
 
 calcCompaniesCost(Companies, TimeSlots, AttendanceCosts, CompaniesCost) :-
-    calcCompaniesCost(Companies, TimeSlots, AttendanceCosts, CompaniesCost, 1).
+    calcAllSlotsInAGH(Companies, TimeSlots, FirstSlots, LastSlots, AttendanceCosts, 1),
+    calcCompaniesCostDays(FirstSlots, LastSlots, AttendanceCosts, CompaniesCost).
 
+calcAllSlotsInAGH(_, _, [], [], [], _).
+calcAllSlotsInAGH(Companies, TimeSlots, FirstSlots, LastSlots, [_|CompaniesCost], Ncompany) :-
+    [FirstSlot, LastSlot] ins 1..20,
+    FirstSlot #=< LastSlot,
+    calcSlotInAGH(Companies, TimeSlots, FirstSlot, LastSlot, Ncompany),
+    labeling([max(FirstSlot), min(LastSlot)],[FirstSlot, LastSlot]),
+    FirstSlots = [FirstSlot|FirstSlots1],
+    LastSlots = [LastSlot|LastSlots1],
+    Ncompany1 #= Ncompany + 1,
+    calcAllSlotsInAGH(Companies, TimeSlots, FirstSlots1, LastSlots1, CompaniesCost, Ncompany1).
 
-calcCompaniesCost(_Companies, _TimeSlots, _AttendanceCosts, 10, 1).
+calcSlotInAGH([], [], _, _, _).
+
+calcSlotInAGH([Company|Companies], [Slot|TimeSlots], FirstSlot, LastSlot, Ncompany) :-
+    Company #= Ncompany #==> (FirstSlot #=< Slot) #/\ (LastSlot #>= Slot),
+    calcSlotInAGH(Companies, TimeSlots, FirstSlot, LastSlot, Ncompany).
+
+calcCompaniesCostDays([],[],[],0).
+calcCompaniesCostDays([FirstSlot|FirstSlots], [LastSlot|LastSlots], [Cost|AttendanceCosts], CompaniesCost) :-
+    getDayFromTimeSlot(FirstSlot, ArrivalDay),
+    getDayFromTimeSlot(LastSlot, DepartureDay),
+    CompaniesCost #= (DepartureDay-ArrivalDay + 1) * Cost + CompaniesCost1,
+    calcCompaniesCostDays(FirstSlots, LastSlots, AttendanceCosts, CompaniesCost1).
+
+getDayFromTimeSlot(TimeSlot, Day) :-
+    TimeSlot in 1..20,
+    Day in 1..5,
+    Day #= (TimeSlot-1) // 4 + 1.
 
 calcStudentExpectation(Companies, Preferences, StudentsExpectations, StudentsCost) :-
     studentsMatch(Companies, Preferences, Match),
@@ -152,20 +180,12 @@ studentsMatch([], [], []).
 studentsMatch([Comp1, Comp2, Comp3|Companies], [StudentPreferences|Preferences], Match) :-
     StudentMatch in 3..15,
     [Like1, Like2, Like3] ins 1..5,
-    like(Comp1, StudentPreferences, Like1),
-    like(Comp2, StudentPreferences, Like2),
-    like(Comp3, StudentPreferences, Like3),
+   	element(Comp1, StudentPreferences, Like1),
+    element(Comp2, StudentPreferences, Like2),
+    element(Comp3, StudentPreferences, Like3),
     sum([Like1, Like2, Like3], #=, StudentMatch),
     Match = [StudentMatch|Match1],
-    studentsMatch(Companies, Preferences, Match1).
-
-like(_, [], _).
-like(Company, [Pref|StudentPreferences], Like) :-
-    Company1 #= Company-1,
-    Company #= 1 #<==> Like #= Pref,
-    like(Company1, StudentPreferences, Like).
-    
-    
+    studentsMatch(Companies, Preferences, Match1).    
 
 calcExpectation([], [], 0).
 calcExpectation([StudentMatch|Match], [StudentsExpectation|Expecations], Result) :-
